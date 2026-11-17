@@ -20,6 +20,12 @@ public:
     QByteArray windowState() const;
     void setWindowState(const QByteArray& s);
 
+    // Оформление: 0 = системное, 1 = светлое, 2 = тёмное; стеклянный стиль — отдельный флаг.
+    int appearance() const;
+    void setAppearance(int a);
+    bool glass() const;
+    void setGlass(bool on);
+
     int maxParallel() const;
     void setMaxParallel(int n);
 };

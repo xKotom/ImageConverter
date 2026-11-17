@@ -7,7 +7,7 @@
 namespace uic {
 
 namespace {
-QSettings make() { return QSettings(QSettings::IniFormat, QSettings::UserScope, "UniversalImageConverter", "settings"); }
+QSettings make() { return QSettings(QSettings::IniFormat, QSettings::UserScope, "ImageConverter", "settings"); }
 }
 
 ConversionSettings SettingsManager::loadConversion() const {
@@ -41,6 +41,10 @@ QByteArray SettingsManager::windowGeometry() const { return make().value("window
 void SettingsManager::setWindowGeometry(const QByteArray& g) { make().setValue("window/geometry", g); }
 QByteArray SettingsManager::windowState() const { return make().value("window/state").toByteArray(); }
 void SettingsManager::setWindowState(const QByteArray& s) { make().setValue("window/state", s); }
+int SettingsManager::appearance() const { return std::clamp(make().value("ui/appearance", 0).toInt(), 0, 2); }
+void SettingsManager::setAppearance(int a) { make().setValue("ui/appearance", a); }
+bool SettingsManager::glass() const { return make().value("ui/glass", false).toBool(); }
+void SettingsManager::setGlass(bool on) { make().setValue("ui/glass", on); }
 int SettingsManager::maxParallel() const { return std::clamp(make().value("maxParallel", 2).toInt(), 1, 16); }
 void SettingsManager::setMaxParallel(int n) { make().setValue("maxParallel", n); }
 

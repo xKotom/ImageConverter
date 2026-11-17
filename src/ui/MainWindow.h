@@ -1,20 +1,20 @@
 #pragma once
+#include "AdvancedSettingsDialog.h"
 #include "application/CommandLineHandler.h"
 #include "application/PreviewController.h"
 #include "application/QueueManager.h"
 #include "infrastructure/settings/SettingsManager.h"
 
 #include <QMainWindow>
+#include <QPixmap>
 
-class QCheckBox;
 class QComboBox;
 class QLabel;
-class QLineEdit;
+class QListView;
 class QProgressBar;
 class QPushButton;
 class QSlider;
-class QSpinBox;
-class QTableView;
+class QStackedWidget;
 class QTextBrowser;
 
 namespace uic {
@@ -33,6 +33,9 @@ public:
 
 protected:
     void closeEvent(QCloseEvent* e) override;
+    void resizeEvent(QResizeEvent* e) override;
+    void paintEvent(QPaintEvent* e) override;
+    void showEvent(QShowEvent* e) override;
     void dragEnterEvent(QDragEnterEvent* e) override;
     void dropEvent(QDropEvent* e) override;
 
@@ -47,8 +50,7 @@ private slots:
     void onSelectionChanged();
     void onQueueChanged();
     void onSettingsChanged();
-    void chooseOutputDir();
-    void chooseBackground();
+    void openAdvanced();
     void showCapabilities();
     void showContextMenu(const QPoint& pos);
     void onPreviewReady(uic::TaskId id, std::shared_ptr<const uic::ImageBuffer> image);
@@ -56,12 +58,16 @@ private slots:
 
 private:
     void buildUi();
+    void applyIcons();
     ConversionSettings currentSettings() const;
     void applySettingsToUi(const ConversionSettings& s);
     std::vector<TaskId> selectedIds() const;
     void refreshDetails();
     void updateButtons();
     void updateQualityControls();
+    void updateAdvancedSummary();
+    void updatePreviewPixmap();
+    void setPreviewText(const QString& text);
     void openResult(TaskId id, bool showInFolder);
 
     CodecRegistry& registry_;
@@ -70,29 +76,33 @@ private:
     SettingsManager& settings_;
 
     FileListModel* model_ = nullptr;
+    QStackedWidget* stack_ = nullptr;
     DropArea* dropArea_ = nullptr;
-    QTableView* table_ = nullptr;
+    QListView* list_ = nullptr;
+    QLabel* countLabel_ = nullptr;
+    QPushButton* addButton_ = nullptr;
+    QPushButton* folderButton_ = nullptr;
+    QPushButton* clearButton_ = nullptr;
+
     QComboBox* formatCombo_ = nullptr;
     QSlider* qualitySlider_ = nullptr;
-    QSpinBox* qualitySpin_ = nullptr;
-    QCheckBox* sameDirCheck_ = nullptr;
-    QLineEdit* outDirEdit_ = nullptr;
-    QPushButton* outDirButton_ = nullptr;
-    QComboBox* conflictCombo_ = nullptr;
-    QComboBox* animationCombo_ = nullptr;
-    QComboBox* metadataCombo_ = nullptr;
-    QPushButton* bgButton_ = nullptr;
+    QLabel* qualityValue_ = nullptr;
+    QLabel* qualityCaption_ = nullptr;
+    QPushButton* advancedButton_ = nullptr;
+    QLabel* advancedSummary_ = nullptr;
+
     QLabel* previewLabel_ = nullptr;
     QTextBrowser* details_ = nullptr;
     QPushButton* convertButton_ = nullptr;
     QPushButton* cancelButton_ = nullptr;
     QPushButton* retryButton_ = nullptr;
-    QPushButton* removeButton_ = nullptr;
-    QPushButton* clearButton_ = nullptr;
-    QProgressBar* overall_ = nullptr;
-    QLabel* statusLabel_ = nullptr;
 
-    std::uint32_t background_ = 0xFFFFFF;
+    QWidget* footer_ = nullptr;
+    QProgressBar* overall_ = nullptr;
+    QLabel* overallLabel_ = nullptr;
+
+    AdvancedOptions adv_;
+    QPixmap previewPixmap_;
     TaskId previewId_ = 0;
     bool loading_ = false; // подавляет реакцию на программное заполнение настроек
 };

@@ -10,6 +10,10 @@ class CapabilitiesDialog : public QDialog {
     Q_OBJECT
 public:
     explicit CapabilitiesDialog(const CodecRegistry& registry, QWidget* parent = nullptr);
+
+protected:
+    void paintEvent(QPaintEvent*) override;
+    void showEvent(QShowEvent*) override;
 };
 
 } // namespace uic

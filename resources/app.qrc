@@ -1,0 +1,8 @@
+<RCC>
+    <qresource prefix="/">
+        <file>icons/app-512.png</file>
+        <file>icons/app-256.png</file>
+        <file>icons/app-64.png</file>
+        <file>icons/app-32.png</file>
+    </qresource>
+</RCC>

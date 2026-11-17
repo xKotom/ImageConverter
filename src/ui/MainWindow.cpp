@@ -1,52 +1,97 @@
 #include "MainWindow.h"
+#include "AdvancedSettingsDialog.h"
+#include "CapabilitiesDialog.h"
 #include "DropArea.h"
 #include "FileListModel.h"
-#include "CapabilitiesDialog.h"
+#include "Icons.h"
+#include "Theme.h"
 #include "application/CapabilityReport.h"
 #include "infrastructure/qt_imageio/QtConvert.h"
 
-#include <QCheckBox>
 #include <QCloseEvent>
-#include <QColorDialog>
 #include <QComboBox>
 #include <QDesktopServices>
+#include <QFontMetrics>
+#include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileDialog>
-#include <QGroupBox>
+#include <QFrame>
 #include <QHBoxLayout>
-#include <QHeaderView>
 #include <QLabel>
-#include <QLineEdit>
+#include <QListView>
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QPainter>
+#include <QPainterPath>
 #include <QProcess>
 #include <QProgressBar>
+#include <QShowEvent>
 #include <QPushButton>
+#include <QShortcut>
 #include <QSlider>
-#include <QSpinBox>
-#include <QSplitter>
+#include <QStackedWidget>
 #include <QStatusBar>
-#include <QTableView>
 #include <QTextBrowser>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <set>
 
 namespace uic {
 
 namespace {
-QString colorStyle(std::uint32_t rgb) {
-    return QString("background-color:#%1;").arg(rgb & 0xFFFFFF, 6, 16, QChar('0'));
+
+QLabel* makeLabel(const QString& text, const char* role) {
+    auto* l = new QLabel(text);
+    l->setProperty("role", role);
+    return l;
 }
+
+QFrame* makeCard() {
+    auto* f = new QFrame;
+    f->setProperty("card", true);
+    return f;
+}
+
+QFrame* hairline() {
+    auto* f = new QFrame;
+    f->setProperty("hairline", true);
+    f->setFixedHeight(1);
+    return f;
+}
+
+QString plural(int n, const char* one, const char* few, const char* many) {
+    const int m10 = n % 10, m100 = n % 100;
+    const char* w = (m10 == 1 && m100 != 11) ? one : (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) ? few : many;
+    return QString::fromUtf8(w);
+}
+
+QPixmap rounded(const QPixmap& src, int radius) {
+    QPixmap out(src.size());
+    out.setDevicePixelRatio(src.devicePixelRatio());
+    out.fill(Qt::transparent);
+    QPainter p(&out);
+    p.setRenderHint(QPainter::Antialiasing);
+    QPainterPath path;
+    const QSizeF logical = QSizeF(src.size()) / src.devicePixelRatio();
+    path.addRoundedRect(QRectF(QPointF(0, 0), logical), radius, radius);
+    p.setClipPath(path);
+    p.drawPixmap(0, 0, src);
+    return out;
+}
+
 } // namespace
 
 MainWindow::MainWindow(CodecRegistry& registry, QueueManager& queue, PreviewController& preview,
                        SettingsManager& settings, QWidget* parent)
     : QMainWindow(parent), registry_(registry), queue_(queue), preview_(preview), settings_(settings) {
-    setWindowTitle("Универсальный конвертер изображений");
+    setWindowTitle("ImageConverter");
+    setObjectName("glass");
+    setAttribute(Qt::WA_TranslucentBackground); // нужно для размытия фона в стеклянном стиле
     setAcceptDrops(true);
-    resize(1180, 720);
+    setMinimumSize(1000, 720);
+    resize(1180, 780);
     buildUi();
 
     connect(&queue_, &QueueManager::taskChanged, this, [this](TaskId id) {
@@ -57,246 +102,272 @@ MainWindow::MainWindow(CodecRegistry& registry, QueueManager& queue, PreviewCont
     connect(&queue_, &QueueManager::taskRemoved, this, [this] { onQueueChanged(); onSelectionChanged(); });
     connect(&queue_, &QueueManager::queueIdle, this, [this] { updateButtons(); });
     connect(&queue_, &QueueManager::importFinished, this, [this](int added, int dups) {
-        statusBar()->showMessage(QString("Добавлено файлов: %1, повторов пропущено: %2").arg(added).arg(dups), 5000);
+        statusBar()->showMessage(QString("Добавлено: %1 · повторов пропущено: %2").arg(added).arg(dups), 5000);
     });
     connect(&preview_, &PreviewController::previewReady, this, &MainWindow::onPreviewReady);
     connect(&preview_, &PreviewController::previewFailed, this, &MainWindow::onPreviewFailed);
+    connect(&Theme::instance(), &Theme::changed, this, [this] {
+        applyIcons();
+        Theme::instance().applyWindowChrome(this);
+        update();
+        list_->viewport()->update();
+        refreshDetails();
+    });
 
     applySettingsToUi(settings_.loadConversion());
     queue_.setMaxParallel(settings_.maxParallel());
     if (auto g = settings_.windowGeometry(); !g.isEmpty()) restoreGeometry(g);
-    if (auto s = settings_.windowState(); !s.isEmpty()) restoreState(s);
     onQueueChanged();
     updateButtons();
 }
+
+// ================== построение интерфейса ==================
 
 void MainWindow::buildUi() {
     auto* central = new QWidget;
     setCentralWidget(central);
     auto* root = new QHBoxLayout(central);
-    auto* split = new QSplitter(Qt::Horizontal);
-    root->addWidget(split);
+    root->setContentsMargins(24, 20, 24, 14);
+    root->setSpacing(22);
 
-    // ---- левая часть: список ----
-    auto* left = new QWidget;
-    auto* lv = new QVBoxLayout(left);
-    lv->setContentsMargins(0, 0, 0, 0);
+    // ---------- левая колонка: заголовок, очередь ----------
+    auto* left = new QVBoxLayout;
+    left->setSpacing(14);
 
-    dropArea_ = new DropArea;
-    connect(dropArea_, &DropArea::pathsDropped, this, &MainWindow::importPaths);
-    lv->addWidget(dropArea_);
-
-    auto* bar = new QHBoxLayout;
-    auto* addBtn = new QPushButton("Добавить файлы…");
-    auto* addDirBtn = new QPushButton("Добавить папку…");
-    removeButton_ = new QPushButton("Удалить");
+    auto* header = new QHBoxLayout;
+    header->setSpacing(8);
+    auto* titles = new QVBoxLayout;
+    titles->setSpacing(0);
+    titles->addWidget(makeLabel("Очередь", "title"));
+    countLabel_ = makeLabel("Нет файлов", "caption");
+    titles->addWidget(countLabel_);
+    header->addLayout(titles);
+    header->addStretch();
     clearButton_ = new QPushButton("Очистить завершённые");
-    connect(addBtn, &QPushButton::clicked, this, &MainWindow::addFiles);
-    connect(addDirBtn, &QPushButton::clicked, this, &MainWindow::addFolder);
-    connect(removeButton_, &QPushButton::clicked, this, &MainWindow::removeSelected);
-    connect(clearButton_, &QPushButton::clicked, this, [this] { queue_.clearFinished(); });
-    bar->addWidget(addBtn);
-    bar->addWidget(addDirBtn);
-    bar->addStretch();
-    bar->addWidget(removeButton_);
-    bar->addWidget(clearButton_);
-    lv->addLayout(bar);
+    clearButton_->setProperty("link", true);
+    clearButton_->setProperty("quiet", true);
+    folderButton_ = new QPushButton("Папка…");
+    addButton_ = new QPushButton("Добавить");
+    for (auto* b : {clearButton_, folderButton_, addButton_}) b->setCursor(Qt::PointingHandCursor);
+    header->addWidget(clearButton_);
+    header->addWidget(folderButton_);
+    header->addWidget(addButton_);
+    left->addLayout(header);
 
+    dropArea_ = new DropArea; // живёт в правой панели (см. ниже)
+
+    // Предпросмотр: крупная картинка слева, подробности и предупреждения справа.
+    auto* pvCard = makeCard();
+    auto* pv = new QVBoxLayout(pvCard);
+    pv->setContentsMargins(14, 14, 14, 12);
+    pv->setSpacing(10);
+    previewLabel_ = new QLabel;
+    previewLabel_->setProperty("role", "preview");
+    previewLabel_->setAlignment(Qt::AlignCenter);
+    previewLabel_->setMinimumSize(260, 140);
+    previewLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+    pv->addWidget(previewLabel_, 1);
+    details_ = new QTextBrowser;
+    details_->setFixedHeight(84);
+    details_->setOpenLinks(false);
+    pv->addWidget(details_, 0);
+    left->addWidget(pvCard, 2);
+
+    // Очередь под предпросмотром: пустое состояние или лента файлов.
+    stack_ = new QStackedWidget;
+    auto* emptyCard = makeCard();
+    auto* ecl = new QVBoxLayout(emptyCard);
+    auto* emptyText = makeLabel("Очередь пуста — перетащите изображения в область справа", "caption");
+    emptyText->setAlignment(Qt::AlignCenter);
+    ecl->addWidget(emptyText);
+    stack_->addWidget(emptyCard);
+
+    auto* listCard = makeCard();
+    auto* lcl = new QVBoxLayout(listCard);
+    lcl->setContentsMargins(4, 6, 4, 6);
     model_ = new FileListModel(queue_, this);
-    table_ = new QTableView;
-    table_->setModel(model_);
-    table_->setItemDelegate(new ProgressDelegate(table_));
-    table_->setSelectionBehavior(QAbstractItemView::SelectRows);
-    table_->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    table_->setAlternatingRowColors(true);
-    table_->setWordWrap(false);
-    table_->verticalHeader()->hide();
-    table_->horizontalHeader()->setStretchLastSection(true);
-    table_->setColumnWidth(FileListModel::ColFile, 220);
-    table_->setColumnWidth(FileListModel::ColFormat, 110);
-    table_->setColumnWidth(FileListModel::ColSize, 150);
-    table_->setColumnWidth(FileListModel::ColStatus, 150);
-    table_->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(table_, &QWidget::customContextMenuRequested, this, &MainWindow::showContextMenu);
-    connect(table_->selectionModel(), &QItemSelectionModel::selectionChanged, this, &MainWindow::onSelectionChanged);
-    connect(table_, &QTableView::doubleClicked, this, [this](const QModelIndex& i) {
-        openResult(model_->idAt(i.row()), false);
-    });
-    lv->addWidget(table_, 1);
+    list_ = new QListView;
+    list_->setModel(model_);
+    list_->setItemDelegate(new RowDelegate(list_));
+    list_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    list_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    list_->setUniformItemSizes(true);
+    list_->setMouseTracking(true);
+    list_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    list_->setContextMenuPolicy(Qt::CustomContextMenu);
+    list_->setFrameShape(QFrame::NoFrame);
+    lcl->addWidget(list_);
+    stack_->addWidget(listCard);
+    left->addWidget(stack_, 3);
 
+    footer_ = new QWidget;
+    footer_->setObjectName("transparent");
+    auto* fl = new QHBoxLayout(footer_);
+    fl->setContentsMargins(2, 0, 2, 0);
+    overallLabel_ = makeLabel({}, "caption");
     overall_ = new QProgressBar;
-    overall_->setTextVisible(true);
-    overall_->hide();
-    lv->addWidget(overall_);
-    split->addWidget(left);
+    overall_->setTextVisible(false);
+    fl->addWidget(overallLabel_);
+    fl->addWidget(overall_, 1);
+    footer_->hide();
+    left->addWidget(footer_);
+    root->addLayout(left, 1);
 
-    // ---- правая часть: настройки + предпросмотр ----
-    auto* right = new QWidget;
-    auto* rv = new QVBoxLayout(right);
-    rv->setContentsMargins(0, 0, 0, 0);
+    // ---------- правая колонка: результат, предпросмотр, действия ----------
+    auto* side = new QWidget;
+    side->setObjectName("transparent");
+    side->setFixedWidth(348);
+    auto* sv = new QVBoxLayout(side);
+    sv->setContentsMargins(0, 0, 0, 0);
+    sv->setSpacing(8);
 
-    auto* sg = new QGroupBox("Параметры конвертации");
-    auto* form = new QVBoxLayout(sg);
-
+    sv->addWidget(makeLabel("РЕЗУЛЬТАТ", "section"));
+    auto* fmtCard = makeCard();
+    auto* fv = new QVBoxLayout(fmtCard);
+    fv->setContentsMargins(16, 10, 16, 12);
+    fv->setSpacing(8);
+    auto* fmtRow = new QHBoxLayout;
+    fmtRow->addWidget(makeLabel("Формат", "row"));
+    fmtRow->addStretch();
     formatCombo_ = new QComboBox;
+    formatCombo_->setMinimumWidth(150);
+    formatCombo_->setCursor(Qt::PointingHandCursor);
     for (const auto& row : CapabilityReport::rows(registry_)) {
         if (!row.cap.write) continue; // формат без кодировщика не предлагается
         formatCombo_->addItem(QString::fromUtf8(row.label), static_cast<int>(row.cap.format));
         formatCombo_->setItemData(formatCombo_->count() - 1, fromUtf8(CapabilityReport::tooltipFor(row)), Qt::ToolTipRole);
     }
-    auto* fl = new QHBoxLayout;
-    fl->addWidget(new QLabel("Формат:"));
-    fl->addWidget(formatCombo_, 1);
-    form->addLayout(fl);
-
+    fmtRow->addWidget(formatCombo_);
+    fv->addLayout(fmtRow);
+    fv->addWidget(hairline());
+    auto* qRow = new QHBoxLayout;
+    qRow->addWidget(makeLabel("Качество", "row"));
+    qRow->addStretch();
+    qualityValue_ = makeLabel("90%", "row");
+    qRow->addWidget(qualityValue_);
+    fv->addLayout(qRow);
     qualitySlider_ = new QSlider(Qt::Horizontal);
     qualitySlider_->setRange(1, 100);
-    qualitySpin_ = new QSpinBox;
-    qualitySpin_->setRange(1, 100);
+    qualitySlider_->setCursor(Qt::PointingHandCursor);
     qualitySlider_->setToolTip("Шкала зависит от кодировщика. Для WEBP значение 100 включает режим без потерь.");
-    auto* ql = new QHBoxLayout;
-    ql->addWidget(new QLabel("Качество:"));
-    ql->addWidget(qualitySlider_, 1);
-    ql->addWidget(qualitySpin_);
-    form->addLayout(ql);
-    connect(qualitySlider_, &QSlider::valueChanged, qualitySpin_, &QSpinBox::setValue);
-    connect(qualitySpin_, &QSpinBox::valueChanged, qualitySlider_, &QSlider::setValue);
+    fv->addWidget(qualitySlider_);
+    qualityCaption_ = makeLabel({}, "caption");
+    qualityCaption_->setWordWrap(true);
+    fv->addWidget(qualityCaption_);
+    sv->addWidget(fmtCard);
 
-    sameDirCheck_ = new QCheckBox("Сохранять рядом с исходным файлом");
-    form->addWidget(sameDirCheck_);
-    outDirEdit_ = new QLineEdit;
-    outDirEdit_->setPlaceholderText("Папка результата");
-    outDirButton_ = new QPushButton("…");
-    outDirButton_->setMaximumWidth(32);
-    auto* dl = new QHBoxLayout;
-    dl->addWidget(outDirEdit_, 1);
-    dl->addWidget(outDirButton_);
-    form->addLayout(dl);
-    connect(outDirButton_, &QPushButton::clicked, this, &MainWindow::chooseOutputDir);
+    sv->addSpacing(4);
+    sv->addWidget(dropArea_, 1);
 
-    conflictCombo_ = new QComboBox;
-    conflictCombo_->addItem("Добавлять суффикс (1), (2)…", static_cast<int>(ConflictPolicy::Suffix));
-    conflictCombo_->addItem("Заменять существующий (с подтверждением)", static_cast<int>(ConflictPolicy::Replace));
-    conflictCombo_->addItem("Пропускать", static_cast<int>(ConflictPolicy::Skip));
-    auto* cl = new QHBoxLayout;
-    cl->addWidget(new QLabel("Если файл уже есть:"));
-    cl->addWidget(conflictCombo_, 1);
-    form->addLayout(cl);
+    advancedButton_ = new QPushButton("  Дополнительно…");
+    advancedButton_->setCursor(Qt::PointingHandCursor);
+    sv->addWidget(advancedButton_);
+    advancedSummary_ = makeLabel({}, "caption");
+    advancedSummary_->setWordWrap(true);
+    advancedSummary_->setAlignment(Qt::AlignHCenter);
+    sv->addWidget(advancedSummary_);
 
-    animationCombo_ = new QComboBox;
-    animationCombo_->addItem("Все кадры (если формат позволяет)", static_cast<int>(AnimationPolicy::AllFrames));
-    animationCombo_->addItem("Только первый кадр", static_cast<int>(AnimationPolicy::FirstFrameWithWarning));
-    animationCombo_->addItem("Отклонять анимированные", static_cast<int>(AnimationPolicy::Reject));
-    auto* al = new QHBoxLayout;
-    al->addWidget(new QLabel("Анимация / страницы:"));
-    al->addWidget(animationCombo_, 1);
-    form->addLayout(al);
-
-    metadataCombo_ = new QComboBox;
-    metadataCombo_->addItem("Удалить", static_cast<int>(MetadataPolicy::Strip));
-    metadataCombo_->addItem("Сохранить, кроме GPS", static_cast<int>(MetadataPolicy::KeepWithoutGps));
-    metadataCombo_->addItem("Сохранить всё, включая GPS", static_cast<int>(MetadataPolicy::KeepAll));
-    metadataCombo_->setToolTip("EXIF/XMP/IPTC. Координаты GPS переносятся только при явном выборе последнего варианта.");
-    auto* ml = new QHBoxLayout;
-    ml->addWidget(new QLabel("Метаданные:"));
-    ml->addWidget(metadataCombo_, 1);
-    form->addLayout(ml);
-
-    bgButton_ = new QPushButton;
-    bgButton_->setFixedWidth(60);
-    bgButton_->setToolTip("Цвет, которым заливается прозрачность при сохранении в формат без alpha (JPEG, BMP)");
-    auto* bl = new QHBoxLayout;
-    bl->addWidget(new QLabel("Фон вместо прозрачности:"));
-    bl->addWidget(bgButton_);
-    bl->addStretch();
-    form->addLayout(bl);
-    connect(bgButton_, &QPushButton::clicked, this, &MainWindow::chooseBackground);
-
-    for (QComboBox* cb : {formatCombo_, conflictCombo_, animationCombo_, metadataCombo_})
-        connect(cb, &QComboBox::currentIndexChanged, this, &MainWindow::onSettingsChanged);
-    connect(qualitySpin_, &QSpinBox::valueChanged, this, &MainWindow::onSettingsChanged);
-    connect(sameDirCheck_, &QCheckBox::toggled, this, &MainWindow::onSettingsChanged);
-    connect(outDirEdit_, &QLineEdit::textChanged, this, &MainWindow::onSettingsChanged);
-    rv->addWidget(sg);
-
-    auto* pg = new QGroupBox("Предпросмотр");
-    auto* pv = new QVBoxLayout(pg);
-    previewLabel_ = new QLabel("Выберите файл в списке");
-    previewLabel_->setAlignment(Qt::AlignCenter);
-    previewLabel_->setMinimumSize(320, 220);
-    previewLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-    previewLabel_->setStyleSheet("background:#2b2b2b;color:#bbb;border-radius:6px;");
-    pv->addWidget(previewLabel_, 3);
-    details_ = new QTextBrowser;
-    details_->setMaximumHeight(190);
-    pv->addWidget(details_, 2);
-    rv->addWidget(pg, 1);
-
-    auto* actions = new QHBoxLayout;
     convertButton_ = new QPushButton("Конвертировать");
+    convertButton_->setProperty("primary", true);
+    convertButton_->setCursor(Qt::PointingHandCursor);
     convertButton_->setDefault(true);
+    sv->addWidget(convertButton_);
+    auto* act = new QHBoxLayout;
+    act->setSpacing(8);
     cancelButton_ = new QPushButton("Отмена");
     retryButton_ = new QPushButton("Повторить");
-    actions->addWidget(convertButton_, 2);
-    actions->addWidget(cancelButton_);
-    actions->addWidget(retryButton_);
-    rv->addLayout(actions);
+    for (auto* b : {cancelButton_, retryButton_}) { b->setCursor(Qt::PointingHandCursor); act->addWidget(b, 1); }
+    sv->addLayout(act);
+    auto* caps = new QPushButton("Поддерживаемые форматы");
+    caps->setProperty("link", true);
+    caps->setProperty("quiet", true);
+    caps->setCursor(Qt::PointingHandCursor);
+    caps->setToolTip(fromUtf8(CapabilityReport::summaryLine(registry_)));
+    sv->addWidget(caps, 0, Qt::AlignHCenter);
+    root->addWidget(side);
+
+    statusBar()->setSizeGripEnabled(false);
+
+    // ---------- связи ----------
+    connect(dropArea_, &DropArea::pathsDropped, this, &MainWindow::importPaths);
+    connect(dropArea_, &DropArea::addFilesRequested, this, &MainWindow::addFiles);
+    connect(dropArea_, &DropArea::addFolderRequested, this, &MainWindow::addFolder);
+    connect(addButton_, &QPushButton::clicked, this, &MainWindow::addFiles);
+    connect(folderButton_, &QPushButton::clicked, this, &MainWindow::addFolder);
+    connect(clearButton_, &QPushButton::clicked, this, [this] { queue_.clearFinished(); });
+    connect(list_, &QWidget::customContextMenuRequested, this, &MainWindow::showContextMenu);
+    connect(list_->selectionModel(), &QItemSelectionModel::selectionChanged, this, &MainWindow::onSelectionChanged);
+    connect(list_, &QListView::doubleClicked, this, [this](const QModelIndex& i) { openResult(model_->idAt(i.row()), false); });
+    auto* del = new QShortcut(QKeySequence::Delete, list_);
+    del->setContext(Qt::WidgetShortcut);
+    connect(del, &QShortcut::activated, this, &MainWindow::removeSelected);
+
+    connect(formatCombo_, &QComboBox::currentIndexChanged, this, &MainWindow::onSettingsChanged);
+    connect(qualitySlider_, &QSlider::valueChanged, this, [this](int v) {
+        qualityValue_->setText(QString("%1%").arg(v));
+        onSettingsChanged();
+    });
+    connect(advancedButton_, &QPushButton::clicked, this, &MainWindow::openAdvanced);
     connect(convertButton_, &QPushButton::clicked, this, &MainWindow::startConversion);
     connect(cancelButton_, &QPushButton::clicked, this, &MainWindow::cancelSelectedOrAll);
     connect(retryButton_, &QPushButton::clicked, this, &MainWindow::retrySelected);
+    connect(caps, &QPushButton::clicked, this, &MainWindow::showCapabilities);
 
-    split->addWidget(right);
-    split->setStretchFactor(0, 3);
-    split->setStretchFactor(1, 2);
-
-    statusLabel_ = new QLabel(fromUtf8(CapabilityReport::summaryLine(registry_)));
-    statusBar()->addPermanentWidget(statusLabel_);
-    auto* capsBtn = new QPushButton("Поддерживаемые форматы…");
-    capsBtn->setFlat(true);
-    connect(capsBtn, &QPushButton::clicked, this, &MainWindow::showCapabilities);
-    statusBar()->addPermanentWidget(capsBtn);
+    applyIcons();
+    setPreviewText("Выберите файл в списке");
 }
 
-// ---------- настройки ----------
+void MainWindow::applyIcons() {
+    const ThemeColors& c = Theme::instance().colors();
+    addButton_->setIcon(Icons::icon(Icons::Kind::Plus, 16, c.text));
+    folderButton_->setIcon(Icons::icon(Icons::Kind::Folder, 16, c.text));
+    advancedButton_->setIcon(Icons::icon(Icons::Kind::Sliders, 17, c.text));
+    for (auto* b : {addButton_, folderButton_, advancedButton_}) b->setIconSize({16, 16});
+}
+
+// ================== настройки ==================
 
 ConversionSettings MainWindow::currentSettings() const {
     ConversionSettings s;
     s.targetFormat = static_cast<ImageFormat>(formatCombo_->currentData().toInt());
-    s.quality = qualitySpin_->value();
-    if (!sameDirCheck_->isChecked()) s.outputDir = toPath(outDirEdit_->text().trimmed());
-    s.conflict = static_cast<ConflictPolicy>(conflictCombo_->currentData().toInt());
-    s.animation = static_cast<AnimationPolicy>(animationCombo_->currentData().toInt());
-    s.metadata = static_cast<MetadataPolicy>(metadataCombo_->currentData().toInt());
-    s.backgroundRgb = background_;
+    s.quality = qualitySlider_->value();
+    s.outputDir = adv_.outputDir;
+    s.conflict = adv_.conflict;
+    s.animation = adv_.animation;
+    s.metadata = adv_.metadata;
+    s.backgroundRgb = adv_.background;
     return s;
 }
 
 void MainWindow::applySettingsToUi(const ConversionSettings& s) {
     loading_ = true;
-    int idx = formatCombo_->findData(static_cast<int>(s.targetFormat));
+    const int idx = formatCombo_->findData(static_cast<int>(s.targetFormat));
     formatCombo_->setCurrentIndex(idx >= 0 ? idx : 0);
-    qualitySpin_->setValue(s.quality);
-    sameDirCheck_->setChecked(s.outputDir.empty());
-    outDirEdit_->setText(toQString(s.outputDir));
-    conflictCombo_->setCurrentIndex(std::max(0, conflictCombo_->findData(static_cast<int>(s.conflict))));
-    animationCombo_->setCurrentIndex(std::max(0, animationCombo_->findData(static_cast<int>(s.animation))));
-    metadataCombo_->setCurrentIndex(std::max(0, metadataCombo_->findData(static_cast<int>(s.metadata))));
-    background_ = s.backgroundRgb;
-    bgButton_->setStyleSheet(colorStyle(background_));
+    qualitySlider_->setValue(s.quality);
+    qualityValue_->setText(QString("%1%").arg(s.quality));
+    adv_.outputDir = s.outputDir;
+    adv_.conflict = s.conflict;
+    adv_.animation = s.animation;
+    adv_.metadata = s.metadata;
+    adv_.background = s.backgroundRgb;
     loading_ = false;
     updateQualityControls();
+    updateAdvancedSummary();
 }
 
 void MainWindow::updateQualityControls() {
     const auto f = static_cast<ImageFormat>(formatCombo_->currentData().toInt());
     const bool lossy = traits(f).lossy;
     qualitySlider_->setEnabled(lossy);
-    qualitySpin_->setEnabled(lossy);
-    const bool same = sameDirCheck_->isChecked();
-    outDirEdit_->setEnabled(!same);
-    outDirButton_->setEnabled(!same);
-    bgButton_->setEnabled(!traits(f).supportsAlpha);
+    qualityValue_->setEnabled(lossy);
+    qualityCaption_->setText(lossy ? (f == ImageFormat::Webp || f == ImageFormat::Avif
+                                          ? "100% включает режим без потерь"
+                                          : "Чем выше значение, тем больше размер файла")
+                                   : "Без потерь — качество не применяется");
+}
+
+void MainWindow::updateAdvancedSummary() {
+    advancedSummary_->setText(AdvancedSettingsDialog::summary(adv_));
 }
 
 void MainWindow::onSettingsChanged() {
@@ -307,9 +378,16 @@ void MainWindow::onSettingsChanged() {
     updateButtons();
 }
 
-void MainWindow::chooseOutputDir() {
-    const QString d = QFileDialog::getExistingDirectory(this, "Папка результата", outDirEdit_->text());
-    if (!d.isEmpty()) { outDirEdit_->setText(d); sameDirCheck_->setChecked(false); }
+void MainWindow::openAdvanced() {
+    AdvancedSettingsDialog dlg(adv_, this);
+    if (dlg.exec() != QDialog::Accepted) return;
+    // оформление применялось в окне сразу; при «Готово» запоминаем его
+    settings_.setAppearance(static_cast<int>(Theme::instance().appearance()));
+    settings_.setGlass(Theme::instance().glass());
+    adv_ = dlg.options();
+    updateAdvancedSummary();
+    settings_.saveConversion(currentSettings());
+    refreshDetails();
 }
 
 void MainWindow::showCapabilities() {
@@ -317,15 +395,7 @@ void MainWindow::showCapabilities() {
     dlg.exec();
 }
 
-void MainWindow::chooseBackground() {
-    const QColor c = QColorDialog::getColor(QColor::fromRgb(background_), this, "Фон вместо прозрачности");
-    if (!c.isValid()) return;
-    background_ = c.rgb() & 0xFFFFFF;
-    bgButton_->setStyleSheet(colorStyle(background_));
-    onSettingsChanged();
-}
-
-// ---------- импорт ----------
+// ================== импорт ==================
 
 void MainWindow::addFiles() {
     QStringList exts;
@@ -378,20 +448,18 @@ void MainWindow::applyCommandLine(const CommandLineOptions& o) {
     }
 }
 
-// ---------- управление очередью ----------
+// ================== управление очередью ==================
 
 std::vector<TaskId> MainWindow::selectedIds() const {
     std::vector<TaskId> ids;
-    for (const QModelIndex& i : table_->selectionModel()->selectedRows()) ids.push_back(model_->idAt(i.row()));
+    std::set<int> rows;
+    for (const QModelIndex& i : list_->selectionModel()->selectedIndexes()) rows.insert(i.row());
+    for (int r : rows) ids.push_back(model_->idAt(r));
     return ids;
 }
 
 void MainWindow::startConversion() {
     const ConversionSettings s = currentSettings();
-    if (!s.outputDir.empty() && !sameDirCheck_->isChecked() && outDirEdit_->text().trimmed().isEmpty()) {
-        QMessageBox::warning(this, "Папка результата", "Укажите папку результата или включите сохранение рядом с исходником.");
-        return;
-    }
     if (s.conflict == ConflictPolicy::Replace &&
         QMessageBox::warning(this, "Замена файлов",
             "Существующие файлы с совпадающими именами будут заменены. Исходные изображения затронуты не будут.\n\nПродолжить?",
@@ -421,7 +489,7 @@ void MainWindow::removeSelected() {
 }
 
 void MainWindow::showContextMenu(const QPoint& pos) {
-    const QModelIndex i = table_->indexAt(pos);
+    const QModelIndex i = list_->indexAt(pos);
     if (!i.isValid()) return;
     const TaskId id = model_->idAt(i.row());
     const ConversionTask* t = queue_.task(id);
@@ -435,7 +503,7 @@ void MainWindow::showContextMenu(const QPoint& pos) {
     auto* retry = m.addAction("Повторить");
     auto* cancel = m.addAction("Отменить");
     auto* remove = m.addAction("Удалить из списка");
-    QAction* a = m.exec(table_->viewport()->mapToGlobal(pos));
+    QAction* a = m.exec(list_->viewport()->mapToGlobal(pos));
     if (a == open) openResult(id, false);
     else if (a == show) openResult(id, true);
     else if (a == retry) queue_.retry({id}, currentSettings());
@@ -458,75 +526,113 @@ void MainWindow::openResult(TaskId id, bool showInFolder) {
     }
 }
 
-// ---------- предпросмотр и подробности ----------
+// ================== предпросмотр и подробности ==================
+
+void MainWindow::setPreviewText(const QString& text) {
+    previewPixmap_ = QPixmap();
+    previewLabel_->setPixmap(QPixmap());
+    previewLabel_->setText(text);
+}
+
+void MainWindow::updatePreviewPixmap() {
+    if (previewPixmap_.isNull()) return;
+    const QSize target = previewLabel_->size() - QSize(2, 2);
+    QPixmap scaled = previewPixmap_.scaled(target * previewLabel_->devicePixelRatioF(), Qt::KeepAspectRatio,
+                                           Qt::SmoothTransformation);
+    scaled.setDevicePixelRatio(previewLabel_->devicePixelRatioF());
+    previewLabel_->setPixmap(rounded(scaled, 8));
+}
+
+void MainWindow::paintEvent(QPaintEvent* e) {
+    Theme::instance().paintBackdrop(this);
+    QMainWindow::paintEvent(e);
+}
+
+void MainWindow::showEvent(QShowEvent* e) {
+    QMainWindow::showEvent(e);
+    Theme::instance().applyWindowChrome(this);
+}
+
+void MainWindow::resizeEvent(QResizeEvent* e) {
+    QMainWindow::resizeEvent(e);
+    updatePreviewPixmap();
+}
 
 void MainWindow::onSelectionChanged() {
     const auto ids = selectedIds();
     if (ids.size() != 1) {
         previewId_ = 0;
         preview_.cancel();
-        previewLabel_->setPixmap({});
-        previewLabel_->setText(ids.empty() ? "Выберите файл в списке" : "Выбрано несколько файлов");
+        setPreviewText(ids.empty() ? "Выберите файл в списке" : "Выбрано несколько файлов");
         refreshDetails();
         updateButtons();
         return;
     }
     previewId_ = ids.front();
     const ConversionTask* t = queue_.task(previewId_);
-    previewLabel_->setPixmap({});
-    previewLabel_->setText("Загрузка…");
+    setPreviewText("Загрузка…");
     if (t && t->info) preview_.request(previewId_, t->source);
-    else previewLabel_->setText("Предпросмотр недоступен");
+    else setPreviewText("Предпросмотр недоступен");
     refreshDetails();
     updateButtons();
 }
 
 void MainWindow::onPreviewReady(TaskId id, std::shared_ptr<const ImageBuffer> image) {
     if (id != previewId_ || !image) return; // результат для уже сменившейся строки
-    const QPixmap px = QPixmap::fromImage(toQImage(*image));
+    previewPixmap_ = QPixmap::fromImage(toQImage(*image));
     previewLabel_->setText({});
-    previewLabel_->setPixmap(px.scaled(previewLabel_->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    updatePreviewPixmap();
 }
 
 void MainWindow::onPreviewFailed(TaskId id, const QString& message) {
     if (id != previewId_) return;
-    previewLabel_->setPixmap({});
-    previewLabel_->setText("Предпросмотр недоступен:\n" + message);
+    setPreviewText("Предпросмотр недоступен\n" + message);
 }
 
 void MainWindow::refreshDetails() {
     const ConversionTask* t = previewId_ ? queue_.task(previewId_) : nullptr;
     if (!t) { details_->clear(); return; }
-    QString h = "<b>" + toQString(t->source.filename()).toHtmlEscaped() + "</b><br>";
-    h += "<span style='color:gray'>" + toQString(t->source.parent_path()).toHtmlEscaped() + "</span><br>";
+    const ThemeColors& c = Theme::instance().colors();
+    const QString dim = c.text2.name(), warn = c.warning.name(), bad = c.danger.name(), good = c.success.name();
+    QString h = QString("<div style='font-size:14px;font-weight:600'>%1</div>").arg(toQString(t->source.filename()).toHtmlEscaped());
+    const QFontMetrics fm(details_->font());
+    const QString dir = fm.elidedText(QDir::toNativeSeparators(toQString(t->source.parent_path())), Qt::ElideMiddle,
+                                      std::max(120, details_->width() - 40));
+    h += QString("<div style='color:%1;font-size:12px'>%2</div><br>").arg(dim, dir.toHtmlEscaped());
     if (t->info) {
         const FileInfo& i = *t->info;
-        h += QString("Формат (по содержимому): <b>%1</b>; расширение: .%2<br>")
-                 .arg(traits(i.actualFormat).label, QString::fromStdString(i.extensionHint));
-        h += QString("Размер: %1×%2; кадров: %3; прозрачность: %4; EXIF-ориентация: %5<br>")
-                 .arg(i.width).arg(i.height).arg(i.frameCount).arg(i.hasAlpha ? "да" : "нет").arg(i.exifOrientation);
+        h += QString("<div style='color:%1;font-size:12px'>%2 · %3×%4 · %5 кадр. · прозрачность: %6</div>")
+                 .arg(dim, traits(i.actualFormat).label).arg(i.width).arg(i.height).arg(i.frameCount)
+                 .arg(i.hasAlpha ? "да" : "нет");
         if (i.metadata.any())
-            h += QString("Метаданные: %1%2%3%4<br>").arg(i.metadata.hasExif ? "EXIF " : "", i.metadata.hasXmp ? "XMP " : "",
-                                                          i.metadata.hasIptc ? "IPTC " : "",
-                                                          i.metadata.hasGps ? "· <b>есть GPS</b>" : "");
+            h += QString("<div style='color:%1;font-size:12px'>Метаданные: %2%3%4%5</div>")
+                     .arg(dim, i.metadata.hasExif ? "EXIF " : "", i.metadata.hasXmp ? "XMP " : "",
+                          i.metadata.hasIptc ? "IPTC " : "", i.metadata.hasGps ? "· <b>есть GPS</b>" : "");
         const ConversionPlan plan = queue_.planner().plan(i, currentSettings());
-        if (!plan.allowed) h += "<span style='color:#c02b2b'>✖ " + fromUtf8(plan.rejectReason).toHtmlEscaped() + "</span><br>";
-        for (const auto& w : plan.warnings) h += "⚠ " + fromUtf8(w).toHtmlEscaped() + "<br>";
+        h += "<br>";
+        if (!plan.allowed)
+            h += QString("<div style='color:%1'>✖ %2</div>").arg(bad, fromUtf8(plan.rejectReason).toHtmlEscaped());
+        for (const auto& w : plan.warnings)
+            h += QString("<div style='font-size:12px'><span style='color:%1'>●</span> %2</div>").arg(warn, fromUtf8(w).toHtmlEscaped());
     }
     if (!t->message.empty() && (t->state == TaskState::Failed || t->state == TaskState::Rejected))
-        h += "<span style='color:#c02b2b'>" + fromUtf8(t->message).toHtmlEscaped() + "</span><br>";
+        h += QString("<br><div style='color:%1'>%2</div>").arg(bad, fromUtf8(t->message).toHtmlEscaped());
     if (t->state == TaskState::Succeeded)
-        h += "<span style='color:#1b7f3b'>Результат: " + toQString(t->result.outputPath).toHtmlEscaped() +
-             QString(" (%1 мс)").arg(t->result.durationMs) + "</span>";
+        h += QString("<br><div style='color:%1'>Готово за %2 мс<br>%3</div>")
+                 .arg(good).arg(t->result.durationMs).arg(toQString(t->result.outputPath).toHtmlEscaped());
     details_->setHtml(h);
 }
 
-// ---------- состояние кнопок и общий прогресс ----------
+// ================== состояние кнопок и общий прогресс ==================
 
 void MainWindow::onQueueChanged() {
+    const int count = static_cast<int>(queue_.tasks().size());
+    stack_->setCurrentIndex(count == 0 ? 0 : 1);
+
     double done = 0;
-    int total = 0, finished = 0;
+    int total = 0, finished = 0, ready = 0;
     for (const auto& t : queue_.tasks()) {
+        if (t.state == TaskState::Ready) ++ready;
         if (!t.settings || t.state == TaskState::Ready || t.state == TaskState::Analyzing) continue;
         ++total;
         switch (t.state) {
@@ -535,28 +641,32 @@ void MainWindow::onQueueChanged() {
         default: done += 1; ++finished; break;
         }
     }
-    overall_->setVisible(total > 0);
+    countLabel_->setText(count == 0 ? QString("Нет файлов")
+                                    : QString("%1 %2 · %3 готово к конвертации").arg(count)
+                                          .arg(plural(count, "файл", "файла", "файлов")).arg(ready));
+    footer_->setVisible(total > 0);
     if (total > 0) {
         overall_->setRange(0, total * 100);
         overall_->setValue(static_cast<int>(done * 100));
-        overall_->setFormat(QString("Обработано %1 из %2").arg(finished).arg(total));
+        overallLabel_->setText(QString("Обработано %1 из %2").arg(finished).arg(total));
     }
     updateButtons();
 }
 
 void MainWindow::updateButtons() {
-    int ready = 0, active = 0, retryable = 0;
+    int ready = 0, active = 0, retryable = 0, finished = 0;
     for (const auto& t : queue_.tasks()) {
         if (t.state == TaskState::Ready) ++ready;
         if (t.state == TaskState::Queued || t.state == TaskState::Running) ++active;
         if (t.state == TaskState::Failed || t.state == TaskState::Cancelled) ++retryable;
+        if (t.state == TaskState::Succeeded || t.state == TaskState::Failed || t.state == TaskState::Cancelled ||
+            t.state == TaskState::Skipped || t.state == TaskState::Rejected) ++finished;
     }
     const bool hasSel = !selectedIds().empty();
     convertButton_->setEnabled(ready > 0);
     cancelButton_->setEnabled(active > 0);
     retryButton_->setEnabled(retryable > 0 || hasSel);
-    removeButton_->setEnabled(hasSel);
-    clearButton_->setEnabled(!queue_.tasks().empty());
+    clearButton_->setVisible(finished > 0); // показываем, только когда есть что очищать
 }
 
 void MainWindow::closeEvent(QCloseEvent* e) {
@@ -570,7 +680,6 @@ void MainWindow::closeEvent(QCloseEvent* e) {
     }
     settings_.saveConversion(currentSettings());
     settings_.setWindowGeometry(saveGeometry());
-    settings_.setWindowState(saveState());
     e->accept();
 }
 

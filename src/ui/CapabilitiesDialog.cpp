@@ -2,7 +2,11 @@
 #include "application/CapabilityReport.h"
 #include "infrastructure/qt_imageio/QtConvert.h"
 
+#include "Theme.h"
+
 #include <QDialogButtonBox>
+#include <QPainter>
+#include <QShowEvent>
 #include <QHeaderView>
 #include <QLabel>
 #include <QTableWidget>
@@ -12,6 +16,8 @@ namespace uic {
 
 CapabilitiesDialog::CapabilitiesDialog(const CodecRegistry& registry, QWidget* parent) : QDialog(parent) {
     setWindowTitle("Поддерживаемые форматы");
+    setObjectName("glass");
+    setAttribute(Qt::WA_TranslucentBackground);
     resize(980, 420);
     auto* lay = new QVBoxLayout(this);
     lay->addWidget(new QLabel(
@@ -54,6 +60,16 @@ CapabilitiesDialog::CapabilitiesDialog(const CodecRegistry& registry, QWidget* p
     auto* box = new QDialogButtonBox(QDialogButtonBox::Close);
     connect(box, &QDialogButtonBox::rejected, this, &QDialog::reject);
     lay->addWidget(box);
+}
+
+void CapabilitiesDialog::paintEvent(QPaintEvent* e) {
+    Theme::instance().paintBackdrop(this);
+    QDialog::paintEvent(e);
+}
+
+void CapabilitiesDialog::showEvent(QShowEvent* e) {
+    QDialog::showEvent(e);
+    Theme::instance().applyWindowChrome(this);
 }
 
 } // namespace uic

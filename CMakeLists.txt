@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
-project(UniversalImageConverter VERSION 0.1.0 LANGUAGES CXX)
+project(ImageConverter VERSION 0.1.0 LANGUAGES CXX)
+if(WIN32)
+    enable_language(RC)
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -43,8 +46,18 @@ add_library(uic_ui STATIC ${UIC_UI_SOURCES})
 target_link_libraries(uic_ui PUBLIC uic_core Qt6::Widgets)
 
 # --- Приложение ---
-add_executable(UniversalImageConverter WIN32 app/main.cpp)
-target_link_libraries(UniversalImageConverter PRIVATE uic_ui)
+set(UIC_APP_SOURCES app/main.cpp resources/app.qrc)
+if(WIN32)
+    # windres не читает пути с кириллицей — .rc и значок копируются в (ASCII) каталог сборки
+    configure_file(resources/app.rc ${CMAKE_BINARY_DIR}/app.rc COPYONLY)
+    configure_file(resources/icons/app.ico ${CMAKE_BINARY_DIR}/app.ico COPYONLY)
+    list(APPEND UIC_APP_SOURCES ${CMAKE_BINARY_DIR}/app.rc)
+endif()
+add_executable(ImageConverter WIN32 ${UIC_APP_SOURCES})
+target_link_libraries(ImageConverter PRIVATE uic_ui)
+if(WIN32)
+    target_link_libraries(uic_ui PUBLIC dwmapi)
+endif()
 
 # --- Тесты ---
 enable_testing()

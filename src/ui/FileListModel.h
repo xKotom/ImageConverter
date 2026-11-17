@@ -1,24 +1,29 @@
 #pragma once
 #include "application/QueueManager.h"
 
-#include <QAbstractTableModel>
+#include <QAbstractListModel>
 #include <QStyledItemDelegate>
 
 namespace uic {
 
 // Отображает очередь. Никакого декодирования в data(): только готовые данные задач.
-class FileListModel : public QAbstractTableModel {
+class FileListModel : public QAbstractListModel {
     Q_OBJECT
 public:
-    enum Column { ColFile, ColFormat, ColSize, ColStatus, ColResult, ColCount };
-    enum Role { TaskIdRole = Qt::UserRole + 1, ProgressRole, StateRole };
+    enum Role {
+        TaskIdRole = Qt::UserRole + 1,
+        StateRole,
+        ProgressRole,   // 0..100 у активных задач, иначе -1
+        SubtitleRole,   // «PNG · 1920×1080 · 2,4 МБ» / результат / причина ошибки
+        BadgeRole,      // короткое имя формата для значка слева
+        StatusTextRole,
+        WarnRole        // есть предупреждения (в т.ч. несовпадение расширения)
+    };
 
     explicit FileListModel(QueueManager& queue, QObject* parent = nullptr);
 
     int rowCount(const QModelIndex& parent = {}) const override;
-    int columnCount(const QModelIndex& parent = {}) const override;
     QVariant data(const QModelIndex& index, int role) const override;
-    QVariant headerData(int section, Qt::Orientation o, int role) const override;
 
     TaskId idAt(int row) const { return ids_.at(static_cast<size_t>(row)); }
     int rowOf(TaskId id) const;
@@ -35,11 +40,12 @@ private:
     std::vector<TaskId> ids_;
 };
 
-// Рисует полосу прогресса в колонке статуса для выполняющихся задач.
-class ProgressDelegate : public QStyledItemDelegate {
+// Строка ленты в стиле Finder/Фото: значок формата, название, подпись и статус справа.
+class RowDelegate : public QStyledItemDelegate {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
     void paint(QPainter* p, const QStyleOptionViewItem& opt, const QModelIndex& idx) const override;
+    QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override { return {200, 60}; }
 };
 
 } // namespace uic

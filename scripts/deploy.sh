@@ -4,7 +4,7 @@
 set -euo pipefail
 BUILD="${1:?укажите папку сборки, например /c/uic-build}"
 export PATH="/c/msys64/ucrt64/bin:$PATH"
-EXE="$BUILD/UniversalImageConverter.exe"
+EXE="$BUILD/ImageConverter.exe"
 [ -f "$EXE" ] || { echo "Не найден $EXE — сначала соберите проект"; exit 1; }
 
 windeployqt6 --no-translations "$EXE"
@@ -21,4 +21,4 @@ for p in "$BUILD"/imageformats/*.dll "$BUILD"/platforms/*.dll "$BUILD"/styles/*.
 done
 # вторым проходом: зависимости только что скопированных DLL
 for d in "$BUILD"/*.dll; do copy_deps "$d"; done
-echo "Готово: $BUILD (можно запускать UniversalImageConverter.exe двойным щелчком)"
+echo "Готово: $BUILD (можно запускать ImageConverter.exe двойным щелчком)"
