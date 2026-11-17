@@ -168,10 +168,10 @@ void MainWindow::buildUi() {
     previewLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     pv->addWidget(previewLabel_, 1);
     details_ = new QTextBrowser;
-    details_->setFixedHeight(84);
+    details_->setFixedHeight(100);
     details_->setOpenLinks(false);
     pv->addWidget(details_, 0);
-    left->addWidget(pvCard, 2);
+    left->addWidget(pvCard, 5);
 
     // Очередь под предпросмотром: пустое состояние или лента файлов.
     stack_ = new QStackedWidget;
@@ -198,7 +198,7 @@ void MainWindow::buildUi() {
     list_->setFrameShape(QFrame::NoFrame);
     lcl->addWidget(list_);
     stack_->addWidget(listCard);
-    left->addWidget(stack_, 3);
+    left->addWidget(stack_, 6);
 
     footer_ = new QWidget;
     footer_->setObjectName("transparent");

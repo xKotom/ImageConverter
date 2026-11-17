@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON) # resources/app.qrc: значок окна
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Test)
 

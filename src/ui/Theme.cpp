@@ -266,7 +266,15 @@ void Theme::setGlass(bool on) {
 // ---------------- стеклянный фон ----------------
 
 void Theme::paintBackdrop(QWidget* w) const {
-    if (!colors_.glass) return;
+    if (!colors_.glass) {
+        // Окна создаются с прозрачным фоном (чтобы стекло включалось без перезапуска), а стили не рисуют
+        // фон прозрачного окна — поэтому в обычном режиме закрашиваем его явно, иначе при смене темы
+        // остаётся «чёрный» фон.
+        QPainter p(w);
+        p.setCompositionMode(QPainter::CompositionMode_Source);
+        p.fillRect(w->rect(), colors_.bg);
+        return;
+    }
     const bool dark = colors_.dark;
     QPainter p(w);
     const QRectF r = w->rect();
@@ -278,14 +286,24 @@ void Theme::paintBackdrop(QWidget* w) const {
         // Окно прозрачное, размытие даёт система. Здесь — лёгкая вуаль для читаемости текста
         // и приглушённые цветные блики, чтобы стекло не выглядело серым.
         p.setCompositionMode(QPainter::CompositionMode_Source);
-        p.fillRect(r, dark ? QColor(12, 14, 32, 105) : QColor(255, 255, 255, 80));
+        p.fillRect(r, dark ? QColor(34, 40, 96, 60) : QColor(255, 255, 255, 80));
         p.setCompositionMode(QPainter::CompositionMode_SourceOver);
-        const Blob glows[] = {
-            {0.08, 0.02, 0.55, dark ? QColor(47, 107, 255, 70) : QColor(98, 160, 255, 70)},
-            {0.98, 0.35, 0.50, dark ? QColor(142, 61, 255, 55) : QColor(196, 139, 255, 60)},
-            {0.40, 1.02, 0.55, dark ? QColor(255, 61, 139, 35) : QColor(255, 156, 200, 55)},
+        const Blob lightGlows[] = {
+            {0.08, 0.02, 0.55, QColor(98, 160, 255, 70)},
+            {0.98, 0.35, 0.50, QColor(196, 139, 255, 60)},
+            {0.40, 1.02, 0.55, QColor(255, 156, 200, 55)},
         };
-        for (const Blob& b : glows) {
+        // тёмная схема — насыщенные цвета, как в исходном тёмном стекле
+        const Blob darkGlows[] = {
+            {0.10, 0.05, 0.62, QColor(47, 107, 255, 150)},
+            {0.95, 0.30, 0.55, QColor(142, 61, 255, 120)},
+            {0.30, 1.00, 0.65, QColor(255, 61, 139, 70)},
+            {0.92, 1.00, 0.45, QColor(22, 199, 168, 70)},
+        };
+        const Blob* glows = dark ? darkGlows : lightGlows;
+        const int glowCount = dark ? 4 : 3;
+        for (int i = 0; i < glowCount; ++i) {
+            const Blob& b = glows[i];
             QRadialGradient g(QPointF(r.width() * b.x, r.height() * b.y), m * b.rad);
             g.setColorAt(0, b.color);
             QColor edge = b.color;
