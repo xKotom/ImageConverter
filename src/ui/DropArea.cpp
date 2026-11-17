@@ -15,7 +15,7 @@ namespace uic {
 
 DropArea::DropArea(QWidget* parent) : QWidget(parent) {
     setAcceptDrops(true);
-    setMinimumHeight(290);
+    setMinimumHeight(250);
     auto* v = new QVBoxLayout(this);
     v->setAlignment(Qt::AlignCenter);
     v->setSpacing(4);

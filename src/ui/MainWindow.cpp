@@ -29,6 +29,8 @@
 #include <QProgressBar>
 #include <QShowEvent>
 #include <QPushButton>
+#include <QScreen>
+#include <QScrollArea>
 #include <QShortcut>
 #include <QSlider>
 #include <QStackedWidget>
@@ -90,8 +92,12 @@ MainWindow::MainWindow(CodecRegistry& registry, QueueManager& queue, PreviewCont
     setObjectName("glass");
     setAttribute(Qt::WA_TranslucentBackground); // нужно для размытия фона в стеклянном стиле
     setAcceptDrops(true);
-    setMinimumSize(1000, 720);
+    setMinimumSize(1000, 520); // правая панель прокручивается, поэтому окно можно делать низким
     resize(1180, 780);
+    if (const QScreen* s = screen()) { // не выше доступной области экрана (учитывая панель задач)
+        const QSize avail = s->availableGeometry().size();
+        resize(std::min(width(), avail.width() - 40), std::min(height(), avail.height() - 60));
+    }
     buildUi();
 
     connect(&queue_, &QueueManager::taskChanged, this, [this](TaskId id) {
@@ -217,6 +223,7 @@ void MainWindow::buildUi() {
     auto* side = new QWidget;
     side->setObjectName("transparent");
     side->setFixedWidth(348);
+    side->setAutoFillBackground(false);
     auto* sv = new QVBoxLayout(side);
     sv->setContentsMargins(0, 0, 0, 0);
     sv->setSpacing(8);
@@ -284,7 +291,15 @@ void MainWindow::buildUi() {
     caps->setCursor(Qt::PointingHandCursor);
     caps->setToolTip(fromUtf8(CapabilityReport::summaryLine(registry_)));
     sv->addWidget(caps, 0, Qt::AlignHCenter);
-    root->addWidget(side);
+    auto* sideScroll = new QScrollArea;
+    sideScroll->setWidget(side);
+    sideScroll->setWidgetResizable(true);
+    sideScroll->setFrameShape(QFrame::NoFrame);
+    sideScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    sideScroll->setFixedWidth(366); // 348 + место под полосу прокрутки
+    sideScroll->setStyleSheet("QScrollArea { background: transparent; }");
+    sideScroll->viewport()->setAutoFillBackground(false);
+    root->addWidget(sideScroll);
 
     statusBar()->setSizeGripEnabled(false);
 
