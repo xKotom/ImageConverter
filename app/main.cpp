@@ -3,7 +3,8 @@
 #include "application/PreviewCache.h"
 #include "application/PreviewController.h"
 #include "application/QueueManager.h"
-#include "infrastructure/qt_imageio/QtCodecs.h"
+#include "application/CapabilityReport.h"
+#include "infrastructure/codecs/Codecs.h"
 #include "infrastructure/settings/SettingsManager.h"
 #include "ui/MainWindow.h"
 
@@ -19,6 +20,7 @@ namespace {
 void printToConsole(const QString& text) {
 #ifdef _WIN32
     if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+        SetConsoleOutputCP(CP_UTF8);
         std::freopen("CONOUT$", "w", stdout);
         std::freopen("CONOUT$", "w", stderr);
     }
@@ -37,12 +39,13 @@ int main(int argc, char* argv[]) {
 
     // Корень композиции: здесь выбираются реализации портов.
     uic::CodecRegistry registry;
-    uic::registerQtCodecs(registry);
+    uic::registerAllCodecs(registry);
 
     const uic::CommandLineOptions opts = uic::CommandLineHandler::parse(app.arguments());
     if (!opts.error.isEmpty()) { printToConsole("Ошибка аргументов: " + opts.error); return 2; }
     if (opts.listCodecs) {
-        printToConsole(QString::fromStdString(uic::describeCapabilities(registry)));
+        printToConsole(QString::fromStdString(uic::CapabilityReport::summaryLine(registry) + "\n\n" +
+                                              uic::CapabilityReport::detailedText(registry)));
         return 0;
     }
 

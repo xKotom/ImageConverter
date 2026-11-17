@@ -39,6 +39,18 @@ struct ImageBuffer {
     std::size_t byteSize() const { return rgba.size() + iccProfile.size(); }
 };
 
+// Анимация / многостраничное изображение: полноразмерные кадры + задержки.
+struct ImageSequence {
+    std::vector<ImageBuffer> frames;
+    std::vector<int> delaysMs; // по одному на кадр (0 для статичных страниц)
+    int loopCount = 0;         // 0 = бесконечно
+    std::size_t byteSize() const {
+        std::size_t n = 0;
+        for (const auto& f : frames) n += f.byteSize();
+        return n;
+    }
+};
+
 // Результат быстрого зондирования декодером (без полного декодирования).
 struct ImageProbe {
     int width = 0;
@@ -47,6 +59,15 @@ struct ImageProbe {
     bool hasAlpha = false;
     bool hasIccProfile = false;
     int exifOrientation = 1; // 1..8
+};
+
+// Сведения о метаданных исходного файла (EXIF/XMP/IPTC).
+struct MetadataInfo {
+    bool hasExif = false;
+    bool hasXmp = false;
+    bool hasIptc = false;
+    bool hasGps = false;
+    bool any() const { return hasExif || hasXmp || hasIptc; }
 };
 
 struct FileInfo {
@@ -59,6 +80,7 @@ struct FileInfo {
     bool hasAlpha = false;
     int frameCount = 1;
     bool hasIccProfile = false;
+    MetadataInfo metadata;
 
     bool extensionMismatch() const {
         ImageFormat hinted = formatFromExtension(extensionHint);
@@ -68,19 +90,27 @@ struct FileInfo {
 };
 
 enum class ConflictPolicy { Suffix, Replace, Skip };
-enum class AnimationPolicy { FirstFrameWithWarning, Reject };
+// AllFrames: сохранить все кадры, если целевой формат поддерживает последовательности;
+// иначе — по запасной политике (первый кадр с предупреждением) либо отказ.
+enum class AnimationPolicy { AllFrames, FirstFrameWithWarning, Reject };
+// Что делать с EXIF/XMP/IPTC. GPS переносится только по явному выбору.
+enum class MetadataPolicy { Strip, KeepWithoutGps, KeepAll };
 
 struct ConversionSettings {
     ImageFormat targetFormat = ImageFormat::Png;
     int quality = 90;                      // 1..100, для форматов с потерями
     fs::path outputDir;                    // пусто = рядом с исходником
     ConflictPolicy conflict = ConflictPolicy::Suffix;
-    AnimationPolicy animation = AnimationPolicy::FirstFrameWithWarning;
+    AnimationPolicy animation = AnimationPolicy::AllFrames;
+    MetadataPolicy metadata = MetadataPolicy::KeepWithoutGps;
     std::uint32_t backgroundRgb = 0xFFFFFF; // фон при потере прозрачности
 };
 
 struct ConversionPlan {
     bool allowed = false;
+    bool allFrames = false;         // будут сохранены все кадры
+    bool transferMetadata = false;  // метаданные будут перенесены
+    int framesToWrite = 1;
     std::string rejectReason;
     std::vector<std::string> warnings;
 };

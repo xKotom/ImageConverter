@@ -18,8 +18,8 @@ ConversionSettings SettingsManager::loadConversion() const {
     s.quality = std::clamp(q.value("quality", 90).toInt(), 1, 100);
     s.outputDir = toPath(q.value("outputDir").toString());
     s.conflict = static_cast<ConflictPolicy>(std::clamp(q.value("conflict", 0).toInt(), 0, 2));
-    s.animation = q.value("rejectAnimation", false).toBool() ? AnimationPolicy::Reject
-                                                              : AnimationPolicy::FirstFrameWithWarning;
+    s.animation = static_cast<AnimationPolicy>(std::clamp(q.value("animation", 0).toInt(), 0, 2));
+    s.metadata = static_cast<MetadataPolicy>(std::clamp(q.value("metadata", 1).toInt(), 0, 2));
     s.backgroundRgb = q.value("background", 0xFFFFFF).toUInt() & 0xFFFFFF;
     return s;
 }
@@ -30,7 +30,8 @@ void SettingsManager::saveConversion(const ConversionSettings& s) {
     q.setValue("quality", s.quality);
     q.setValue("outputDir", toQString(s.outputDir));
     q.setValue("conflict", static_cast<int>(s.conflict));
-    q.setValue("rejectAnimation", s.animation == AnimationPolicy::Reject);
+    q.setValue("animation", static_cast<int>(s.animation));
+    q.setValue("metadata", static_cast<int>(s.metadata));
     q.setValue("background", s.backgroundRgb);
 }
 

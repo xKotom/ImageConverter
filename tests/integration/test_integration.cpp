@@ -1,10 +1,11 @@
 // Интеграционные тесты на реальных кодеках Qt Image I/O: сквозная конвертация, очередь, превью.
 #include "application/CodecRegistry.h"
+#include "application/CapabilityReport.h"
 #include "application/ConversionEngine.h"
 #include "application/FileAnalyzer.h"
 #include "application/PreviewController.h"
 #include "application/QueueManager.h"
-#include "infrastructure/qt_imageio/QtCodecs.h"
+#include "infrastructure/codecs/Codecs.h"
 #include "infrastructure/qt_imageio/QtConvert.h"
 
 #include <QImageReader>
@@ -55,20 +56,21 @@ private slots:
     void initTestCase() {
         QVERIFY(tmp_.isValid());
         root_ = fs::path(tmp_.path().toStdU16String());
-        registerQtCodecs(reg_);
+        registerAllCodecs(reg_);
         for (auto f : {ImageFormat::Jpeg, ImageFormat::Png, ImageFormat::Bmp}) {
             QVERIFY(reg_.canRead(f));
             QVERIFY(reg_.canWrite(f));
         }
-        qInfo() << QString::fromStdString(describeCapabilities(reg_));
+        qInfo().noquote() << QString::fromStdString(CapabilityReport::detailedText(reg_));
     }
 
     void capabilities_reflectActualPlugins() {
         // WEBP в списке доступных — только если плагин реально загружен
         const bool plugin = QImageWriter::supportedImageFormats().contains("webp");
         QCOMPARE(reg_.canWrite(ImageFormat::Webp), plugin);
-        // HEIF без плагина недоступен и не предлагается
-        QCOMPARE(reg_.canRead(ImageFormat::Heif), QImageReader::supportedImageFormats().contains("heif"));
+        // HEIC/AVIF обслуживает libheif; запись HEIC без явного разрешения лицензии (GPL) отключена
+        QVERIFY(!reg_.canWrite(ImageFormat::Heif));
+        QVERIFY(reg_.canWrite(ImageFormat::Gif)); // GIF пишет giflib, а не Qt
     }
 
     void convert_allFormatPairs() {

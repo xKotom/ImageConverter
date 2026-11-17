@@ -8,6 +8,16 @@ set(CMAKE_AUTOMOC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Test)
 
+# Кодеки этапа 5: libheif (HEIC/AVIF), exiv2 (метаданные), libwebp/libwebpmux (анимированный WEBP),
+# libtiff (многостраничный TIFF), giflib (GIF).
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(UIC_DEPS REQUIRED IMPORTED_TARGET libheif exiv2 libwebp libwebpmux libtiff-4)
+find_library(UIC_GIF_LIB NAMES gif giflib REQUIRED)
+find_path(UIC_GIF_INCLUDE gif_lib.h REQUIRED)
+
+# Запись HEIC требует HEVC-кодировщика x265 (лицензия GPL) — по умолчанию выключена.
+option(UIC_ENABLE_HEIC_ENCODE "Разрешить запись HEIC (нужен кодировщик HEVC, лицензия GPL)" OFF)
+
 if(MSVC)
     add_compile_options(/utf-8 /W4)
 else()
@@ -21,7 +31,11 @@ file(GLOB_RECURSE UIC_CORE_HEADERS CONFIGURE_DEPENDS
     src/domain/*.h src/application/*.h src/infrastructure/*.h)
 add_library(uic_core STATIC ${UIC_CORE_SOURCES} ${UIC_CORE_HEADERS})
 target_include_directories(uic_core PUBLIC src)
-target_link_libraries(uic_core PUBLIC Qt6::Core Qt6::Gui)
+target_include_directories(uic_core PRIVATE ${UIC_GIF_INCLUDE})
+target_link_libraries(uic_core PUBLIC Qt6::Core Qt6::Gui PkgConfig::UIC_DEPS ${UIC_GIF_LIB})
+if(UIC_ENABLE_HEIC_ENCODE)
+    target_compile_definitions(uic_core PRIVATE UIC_ENABLE_HEIC_ENCODE)
+endif()
 
 # --- Интерфейс ---
 file(GLOB UIC_UI_SOURCES CONFIGURE_DEPENDS src/ui/*.cpp src/ui/*.h)

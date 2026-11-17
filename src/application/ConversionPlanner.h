@@ -7,6 +7,7 @@ namespace uic {
 class ConversionPlanner {
 public:
     static constexpr long long kMaxPixels = 150'000'000; // защита памяти
+    static constexpr long long kMaxSequenceBytes = 1536ll * 1024 * 1024; // все кадры анимации в памяти
     explicit ConversionPlanner(const CodecRegistry& registry) : registry_(registry) {}
     ConversionPlan plan(const FileInfo& info, const ConversionSettings& settings) const;
 private:

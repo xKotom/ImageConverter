@@ -12,6 +12,10 @@ public:
     Result<ImageProbe> probe(const fs::path& path) override;
     Result<ImageBuffer> decode(const fs::path& path, const DecodeOptions&,
                                const CancellationToken&, const ProgressSink&) override;
+    // GIF, анимированный WEBP, многостраничный TIFF
+    bool supportsSequence(ImageFormat f) const override;
+    Result<ImageSequence> decodeSequence(const fs::path& path, const CancellationToken&,
+                                         const ProgressSink&) override;
 };
 
 } // namespace uic

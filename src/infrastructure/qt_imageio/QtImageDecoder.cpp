@@ -1,6 +1,7 @@
 #include "QtImageDecoder.h"
 #include "QtConvert.h"
 
+#include <algorithm>
 #include <QByteArray>
 #include <QColorSpace>
 #include <QImageReader>
@@ -50,6 +51,9 @@ Result<ImageProbe> QtImageDecoder::probe(const fs::path& path) {
     QImageReader r(toQString(path));
     r.setDecideFormatFromContent(true); // содержимое важнее расширения
     if (!r.canRead()) return mapReaderError(r);
+    // Число кадров нужно спрашивать ДО size()/imageFormat(): после них некоторые плагины
+    // (TIFF, WEBP) уже сдвинули внутреннее состояние и отдают 1.
+    const int frames = r.imageCount();
     const QSize sz = r.size();
     ImageProbe p;
     p.width = sz.width();
@@ -66,8 +70,7 @@ Result<ImageProbe> QtImageDecoder::probe(const fs::path& path) {
         p.hasAlpha = QImage::toPixelFormat(r.imageFormat()).alphaUsage() == QPixelFormat::UsesAlpha;
         p.hasIccProfile = false;
     }
-    const int n = r.imageCount();
-    p.frameCount = n > 0 ? n : 1;
+    p.frameCount = frames > 0 ? frames : 1;
     p.exifOrientation = toExif(r.transformation());
     // Ориентация 5..8 меняет местами ширину и высоту при автоповороте.
     if (p.exifOrientation >= 5) std::swap(p.width, p.height);
@@ -97,6 +100,42 @@ Result<ImageBuffer> QtImageDecoder::decode(const fs::path& path, const DecodeOpt
     if (buf.empty()) return makeError(ErrorCode::CorruptedFile, "Получено пустое изображение");
     if (progress) progress(100);
     return buf;
+}
+
+bool QtImageDecoder::supportsSequence(ImageFormat f) const {
+    return supports(f) && (f == ImageFormat::Gif || f == ImageFormat::Webp || f == ImageFormat::Tiff);
+}
+
+Result<ImageSequence> QtImageDecoder::decodeSequence(const fs::path& path, const CancellationToken& token,
+                                                     const ProgressSink& progress) {
+    constexpr std::size_t kMaxBytes = 1536ull * 1024 * 1024; // защита памяти: кадры хранятся целиком
+    QImageReader r(toQString(path));
+    r.setDecideFormatFromContent(true);
+    r.setAutoTransform(true);
+    const bool paged = r.format().toLower().startsWith("tif"); // страницы листаются явно
+    int total = r.imageCount();
+    if (total <= 0) total = 1;
+
+    ImageSequence seq;
+    int loop = r.loopCount();
+    seq.loopCount = loop > 0 ? loop : 0; // «бесконечно» (-1 / 0) -> 0
+    for (int i = 0;; ++i) {
+        if (token.cancelled()) return makeError(ErrorCode::Cancelled, "Операция отменена");
+        if (paged && !r.jumpToImage(i)) break;
+        QImage img = r.read();
+        if (img.isNull()) {
+            if (seq.frames.empty()) return mapReaderError(r);
+            break; // конец последовательности
+        }
+        seq.delaysMs.push_back(paged ? 0 : std::max(0, r.nextImageDelay()));
+        seq.frames.push_back(toBuffer(img));
+        if (seq.byteSize() > kMaxBytes)
+            return makeError(ErrorCode::TooLarge, "Все кадры не помещаются в допустимый объём памяти");
+        if (progress) progress(std::min(99, (i + 1) * 100 / std::max(total, i + 1)));
+        if (i > 20000) break;
+    }
+    if (seq.frames.empty()) return makeError(ErrorCode::CorruptedFile, "Не удалось прочитать кадры");
+    return seq;
 }
 
 } // namespace uic

@@ -19,6 +19,13 @@ public:
     virtual Result<ImageProbe> probe(const fs::path&) = 0;
     virtual Result<ImageBuffer> decode(const fs::path&, const DecodeOptions&,
                                        const CancellationToken&, const ProgressSink&) = 0;
+
+    // Анимация и многостраничные файлы: все кадры целиком (с ориентацией, применённой к пикселям).
+    virtual bool supportsSequence(ImageFormat) const { return false; }
+    virtual Result<ImageSequence> decodeSequence(const fs::path&, const CancellationToken&,
+                                                 const ProgressSink&) {
+        return makeError(ErrorCode::UnsupportedFormat, "Чтение анимации не поддерживается этим декодером");
+    }
 };
 
 } // namespace uic

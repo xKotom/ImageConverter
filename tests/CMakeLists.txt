@@ -6,3 +6,4 @@ endfunction()
 
 uic_add_test(test_unit unit/test_unit.cpp)
 uic_add_test(test_integration integration/test_integration.cpp)
+uic_add_test(test_stage5 integration/test_stage5.cpp)

@@ -50,7 +50,7 @@ ConversionResult ConversionEngine::run(const FileInfo& info, const ConversionSet
     };
     auto cancelled = [&] { return fail(ErrorCode::Cancelled, "Операция отменена"); };
 
-    // 1. План (повторно: задача могла быть создана давно, а кодеки — не меняются, но проверка дешёвая)
+    // 1. План (повторно: настройки и кодеки могли измениться с момента добавления файла)
     ConversionPlan plan = ConversionPlanner(registry_).plan(info, s);
     if (!plan.allowed) return fail(ErrorCode::UnsupportedFormat, plan.rejectReason);
     res.warnings = plan.warnings;
@@ -73,37 +73,77 @@ ConversionResult ConversionEngine::run(const FileInfo& info, const ConversionSet
     }
     report(5);
 
-    // 3. Декодирование
-    auto decoded = dec->decode(info.path, DecodeOptions{0, true}, token, nullptr);
-    if (!decoded) return fail(decoded.error().code, decoded.error().message);
-    ImageBuffer img = std::move(decoded.value());
-    report(40);
-    if (token.cancelled()) return cancelled();
+    const bool dropAlpha = !traits(s.targetFormat).supportsAlpha;
+    const bool dropIcc = !traits(s.targetFormat).supportsIcc;
+    auto prepare = [&](ImageBuffer& b) {
+        if (b.hasAlpha && dropAlpha) flattenAlpha(b, s.backgroundRgb);
+        if (dropIcc) b.iccProfile.clear();
+    };
 
-    // 4. Преобразования
-    if (img.hasAlpha && !traits(s.targetFormat).supportsAlpha) flattenAlpha(img, s.backgroundRgb);
-    if (!traits(s.targetFormat).supportsIcc) img.iccProfile.clear();
-
-    // 5. Кодирование во временный файл в целевой папке
-    const fs::path dir = name.path.parent_path();
-    auto writer = AtomicFileWriter::begin(dir);
+    // 3. Временный файл в целевой папке (тот же том, непредсказуемое имя)
+    auto writer = AtomicFileWriter::begin(name.path.parent_path());
     if (!writer) return fail(writer.error().code, writer.error().message);
+    const EncoderOptions eo{s.targetFormat, s.quality};
 
-    EncoderOptions eo{s.targetFormat, s.quality};
-    auto enst = enc->encode(img, writer.value().tempPath(), eo, token, nullptr);
-    if (!enst) return fail(enst.error().code, enst.error().message); // writer удалит temp
-    report(80);
+    int expectedW = 0, expectedH = 0, expectedFrames = 1;
+    if (plan.allFrames) {
+        // 4а. Все кадры: анимация / многостраничный файл
+        IImageDecoder* sdec = registry_.sequenceDecoderFor(info.actualFormat);
+        IImageEncoder* senc = registry_.sequenceEncoderFor(s.targetFormat);
+        if (!sdec || !senc) return fail(ErrorCode::Internal, "Нет адаптеров для последовательности кадров");
+        auto seqR = sdec->decodeSequence(info.path, token, nullptr);
+        if (!seqR) return fail(seqR.error().code, seqR.error().message);
+        ImageSequence seq = std::move(seqR.value());
+        report(35);
+        if (token.cancelled()) return cancelled();
+        for (auto& f : seq.frames) prepare(f);
+        expectedW = seq.frames.front().width;
+        expectedH = seq.frames.front().height;
+        expectedFrames = static_cast<int>(seq.frames.size());
+        if (expectedFrames != info.frameCount)
+            res.warnings.push_back("Число прочитанных кадров (" + std::to_string(expectedFrames) +
+                                   ") отличается от заявленного (" + std::to_string(info.frameCount) + ")");
+        auto st = senc->encodeSequence(seq, writer.value().tempPath(), eo, token, nullptr);
+        if (!st) return fail(st.error().code, st.error().message); // writer удалит temp
+    } else {
+        // 4б. Один кадр (у анимации — первый, об этом предупреждено в плане)
+        auto decoded = dec->decode(info.path, DecodeOptions{0, true}, token, nullptr);
+        if (!decoded) return fail(decoded.error().code, decoded.error().message);
+        ImageBuffer img = std::move(decoded.value());
+        report(40);
+        if (token.cancelled()) return cancelled();
+        prepare(img);
+        expectedW = img.width;
+        expectedH = img.height;
+        auto st = enc->encode(img, writer.value().tempPath(), eo, token, nullptr);
+        if (!st) return fail(st.error().code, st.error().message);
+    }
+    report(75);
     if (token.cancelled()) return cancelled();
 
-    // 6. Проверка: размер > 0 и повторное чтение заголовка
+    // 5. Метаданные: сбой не губит результат, но о нём сообщается
+    if (plan.transferMetadata) {
+        auto mt = registry_.metadataService()->transfer(info.path, writer.value().tempPath(), s.metadata);
+        if (!mt) res.warnings.push_back("Метаданные перенести не удалось: " + mt.error().message);
+    }
+    report(85);
+
+    // 6. Проверка: размер > 0 и повторное чтение результата декодером целевого формата
     std::error_code ec;
     auto size = fs::file_size(writer.value().tempPath(), ec);
     if (ec || size == 0) return fail(ErrorCode::VerifyFailed, "Результат пустой или недоступен");
-    auto check = dec->probe(writer.value().tempPath());
-    if (!check) return fail(ErrorCode::VerifyFailed, "Результат не читается: " + check.error().message);
-    if (check.value().width != img.width || check.value().height != img.height)
-        return fail(ErrorCode::VerifyFailed, "Размеры результата не совпадают с ожидаемыми");
-    report(90);
+    if (IImageDecoder* vdec = registry_.decoderFor(s.targetFormat)) {
+        auto check = vdec->probe(writer.value().tempPath());
+        if (!check) return fail(ErrorCode::VerifyFailed, "Результат не читается: " + check.error().message);
+        if (check.value().width != expectedW || check.value().height != expectedH)
+            return fail(ErrorCode::VerifyFailed, "Размеры результата не совпадают с ожидаемыми");
+        if (plan.allFrames && check.value().frameCount != expectedFrames)
+            return fail(ErrorCode::VerifyFailed, "Число кадров в результате (" + std::to_string(check.value().frameCount) +
+                                                     ") не совпадает с ожидаемым (" + std::to_string(expectedFrames) + ")");
+    } else {
+        res.warnings.push_back("Результат не проверен повторным чтением: декодера для этого формата нет");
+    }
+    report(92);
     if (token.cancelled()) return cancelled();
 
     // 7. Фиксация итогового имени

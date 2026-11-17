@@ -1,7 +1,8 @@
 #include "MainWindow.h"
 #include "DropArea.h"
 #include "FileListModel.h"
-#include "infrastructure/qt_imageio/QtCodecs.h"
+#include "CapabilitiesDialog.h"
+#include "application/CapabilityReport.h"
 #include "infrastructure/qt_imageio/QtConvert.h"
 
 #include <QCheckBox>
@@ -139,8 +140,11 @@ void MainWindow::buildUi() {
     auto* form = new QVBoxLayout(sg);
 
     formatCombo_ = new QComboBox;
-    for (ImageFormat f : registry_.writableFormats())
-        formatCombo_->addItem(QString::fromUtf8(traits(f).label), static_cast<int>(f));
+    for (const auto& row : CapabilityReport::rows(registry_)) {
+        if (!row.cap.write) continue; // формат без кодировщика не предлагается
+        formatCombo_->addItem(QString::fromUtf8(row.label), static_cast<int>(row.cap.format));
+        formatCombo_->setItemData(formatCombo_->count() - 1, fromUtf8(CapabilityReport::tooltipFor(row)), Qt::ToolTipRole);
+    }
     auto* fl = new QHBoxLayout;
     fl->addWidget(new QLabel("Формат:"));
     fl->addWidget(formatCombo_, 1);
@@ -180,8 +184,24 @@ void MainWindow::buildUi() {
     cl->addWidget(conflictCombo_, 1);
     form->addLayout(cl);
 
-    rejectAnimCheck_ = new QCheckBox("Отклонять анимированные файлы (иначе — только первый кадр)");
-    form->addWidget(rejectAnimCheck_);
+    animationCombo_ = new QComboBox;
+    animationCombo_->addItem("Все кадры (если формат позволяет)", static_cast<int>(AnimationPolicy::AllFrames));
+    animationCombo_->addItem("Только первый кадр", static_cast<int>(AnimationPolicy::FirstFrameWithWarning));
+    animationCombo_->addItem("Отклонять анимированные", static_cast<int>(AnimationPolicy::Reject));
+    auto* al = new QHBoxLayout;
+    al->addWidget(new QLabel("Анимация / страницы:"));
+    al->addWidget(animationCombo_, 1);
+    form->addLayout(al);
+
+    metadataCombo_ = new QComboBox;
+    metadataCombo_->addItem("Удалить", static_cast<int>(MetadataPolicy::Strip));
+    metadataCombo_->addItem("Сохранить, кроме GPS", static_cast<int>(MetadataPolicy::KeepWithoutGps));
+    metadataCombo_->addItem("Сохранить всё, включая GPS", static_cast<int>(MetadataPolicy::KeepAll));
+    metadataCombo_->setToolTip("EXIF/XMP/IPTC. Координаты GPS переносятся только при явном выборе последнего варианта.");
+    auto* ml = new QHBoxLayout;
+    ml->addWidget(new QLabel("Метаданные:"));
+    ml->addWidget(metadataCombo_, 1);
+    form->addLayout(ml);
 
     bgButton_ = new QPushButton;
     bgButton_->setFixedWidth(60);
@@ -193,12 +213,11 @@ void MainWindow::buildUi() {
     form->addLayout(bl);
     connect(bgButton_, &QPushButton::clicked, this, &MainWindow::chooseBackground);
 
-    for (auto* w : {static_cast<QWidget*>(formatCombo_), static_cast<QWidget*>(conflictCombo_)})
-        connect(static_cast<QComboBox*>(w), &QComboBox::currentIndexChanged, this, &MainWindow::onSettingsChanged);
+    for (QComboBox* cb : {formatCombo_, conflictCombo_, animationCombo_, metadataCombo_})
+        connect(cb, &QComboBox::currentIndexChanged, this, &MainWindow::onSettingsChanged);
     connect(qualitySpin_, &QSpinBox::valueChanged, this, &MainWindow::onSettingsChanged);
     connect(sameDirCheck_, &QCheckBox::toggled, this, &MainWindow::onSettingsChanged);
     connect(outDirEdit_, &QLineEdit::textChanged, this, &MainWindow::onSettingsChanged);
-    connect(rejectAnimCheck_, &QCheckBox::toggled, this, &MainWindow::onSettingsChanged);
     rv->addWidget(sg);
 
     auto* pg = new QGroupBox("Предпросмотр");
@@ -231,8 +250,12 @@ void MainWindow::buildUi() {
     split->setStretchFactor(0, 3);
     split->setStretchFactor(1, 2);
 
-    statusLabel_ = new QLabel(QString::fromStdString(describeCapabilities(registry_)));
+    statusLabel_ = new QLabel(fromUtf8(CapabilityReport::summaryLine(registry_)));
     statusBar()->addPermanentWidget(statusLabel_);
+    auto* capsBtn = new QPushButton("Поддерживаемые форматы…");
+    capsBtn->setFlat(true);
+    connect(capsBtn, &QPushButton::clicked, this, &MainWindow::showCapabilities);
+    statusBar()->addPermanentWidget(capsBtn);
 }
 
 // ---------- настройки ----------
@@ -243,7 +266,8 @@ ConversionSettings MainWindow::currentSettings() const {
     s.quality = qualitySpin_->value();
     if (!sameDirCheck_->isChecked()) s.outputDir = toPath(outDirEdit_->text().trimmed());
     s.conflict = static_cast<ConflictPolicy>(conflictCombo_->currentData().toInt());
-    s.animation = rejectAnimCheck_->isChecked() ? AnimationPolicy::Reject : AnimationPolicy::FirstFrameWithWarning;
+    s.animation = static_cast<AnimationPolicy>(animationCombo_->currentData().toInt());
+    s.metadata = static_cast<MetadataPolicy>(metadataCombo_->currentData().toInt());
     s.backgroundRgb = background_;
     return s;
 }
@@ -256,7 +280,8 @@ void MainWindow::applySettingsToUi(const ConversionSettings& s) {
     sameDirCheck_->setChecked(s.outputDir.empty());
     outDirEdit_->setText(toQString(s.outputDir));
     conflictCombo_->setCurrentIndex(std::max(0, conflictCombo_->findData(static_cast<int>(s.conflict))));
-    rejectAnimCheck_->setChecked(s.animation == AnimationPolicy::Reject);
+    animationCombo_->setCurrentIndex(std::max(0, animationCombo_->findData(static_cast<int>(s.animation))));
+    metadataCombo_->setCurrentIndex(std::max(0, metadataCombo_->findData(static_cast<int>(s.metadata))));
     background_ = s.backgroundRgb;
     bgButton_->setStyleSheet(colorStyle(background_));
     loading_ = false;
@@ -285,6 +310,11 @@ void MainWindow::onSettingsChanged() {
 void MainWindow::chooseOutputDir() {
     const QString d = QFileDialog::getExistingDirectory(this, "Папка результата", outDirEdit_->text());
     if (!d.isEmpty()) { outDirEdit_->setText(d); sameDirCheck_->setChecked(false); }
+}
+
+void MainWindow::showCapabilities() {
+    CapabilitiesDialog dlg(registry_, this);
+    dlg.exec();
 }
 
 void MainWindow::chooseBackground() {
@@ -475,6 +505,10 @@ void MainWindow::refreshDetails() {
                  .arg(traits(i.actualFormat).label, QString::fromStdString(i.extensionHint));
         h += QString("Размер: %1×%2; кадров: %3; прозрачность: %4; EXIF-ориентация: %5<br>")
                  .arg(i.width).arg(i.height).arg(i.frameCount).arg(i.hasAlpha ? "да" : "нет").arg(i.exifOrientation);
+        if (i.metadata.any())
+            h += QString("Метаданные: %1%2%3%4<br>").arg(i.metadata.hasExif ? "EXIF " : "", i.metadata.hasXmp ? "XMP " : "",
+                                                          i.metadata.hasIptc ? "IPTC " : "",
+                                                          i.metadata.hasGps ? "· <b>есть GPS</b>" : "");
         const ConversionPlan plan = queue_.planner().plan(i, currentSettings());
         if (!plan.allowed) h += "<span style='color:#c02b2b'>✖ " + fromUtf8(plan.rejectReason).toHtmlEscaped() + "</span><br>";
         for (const auto& w : plan.warnings) h += "⚠ " + fromUtf8(w).toHtmlEscaped() + "<br>";

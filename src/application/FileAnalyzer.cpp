@@ -36,6 +36,10 @@ Result<FileInfo> FileAnalyzer::analyze(const fs::path& path) const {
     info.hasAlpha = probe.value().hasAlpha;
     info.frameCount = probe.value().frameCount;
     info.hasIccProfile = probe.value().hasIccProfile;
+    if (IMetadataService* md = registry_.metadataService()) {
+        auto m = md->inspect(path); // неудача не мешает анализу: считаем, что метаданных нет
+        if (m.ok()) info.metadata = m.value();
+    }
     return info;
 }
 

@@ -18,6 +18,14 @@ public:
     virtual Status encode(const ImageBuffer&, const fs::path& temporaryPath,
                           const EncoderOptions&, const CancellationToken&,
                           const ProgressSink&) = 0;
+
+    // Запись анимации / многостраничного файла.
+    virtual bool supportsSequence(ImageFormat) const { return false; }
+    virtual Status encodeSequence(const ImageSequence&, const fs::path& /*temporaryPath*/,
+                                  const EncoderOptions&, const CancellationToken&,
+                                  const ProgressSink&) {
+        return makeError(ErrorCode::NoEncoder, "Запись анимации не поддерживается этим кодировщиком");
+    }
 };
 
 } // namespace uic

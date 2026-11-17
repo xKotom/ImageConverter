@@ -49,6 +49,7 @@ private slots:
     void onSettingsChanged();
     void chooseOutputDir();
     void chooseBackground();
+    void showCapabilities();
     void showContextMenu(const QPoint& pos);
     void onPreviewReady(uic::TaskId id, std::shared_ptr<const uic::ImageBuffer> image);
     void onPreviewFailed(uic::TaskId id, const QString& message);
@@ -78,7 +79,8 @@ private:
     QLineEdit* outDirEdit_ = nullptr;
     QPushButton* outDirButton_ = nullptr;
     QComboBox* conflictCombo_ = nullptr;
-    QCheckBox* rejectAnimCheck_ = nullptr;
+    QComboBox* animationCombo_ = nullptr;
+    QComboBox* metadataCombo_ = nullptr;
     QPushButton* bgButton_ = nullptr;
     QLabel* previewLabel_ = nullptr;
     QTextBrowser* details_ = nullptr;
