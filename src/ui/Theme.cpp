@@ -125,12 +125,8 @@ void Theme::rebuild(bool dark) {
 
 QString Theme::styleSheet() const {
     const ThemeColors& c = colors_;
-    // Стеклянная карточка: вертикальный градиент прозрачности даёт «блик» сверху.
-    const QString cardBg = c.glass
-        ? QString("qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 %1, stop:1 %2)")
-              .arg(css(withAlpha(c.dark ? QColor(255, 255, 255) : QColor(255, 255, 255), c.dark ? 0.15 : 0.62)),
-                   css(withAlpha(QColor(255, 255, 255), c.dark ? 0.06 : 0.34)))
-        : css(c.card);
+    // Стеклянная карточка: плоская полупрозрачная заливка (цвет и прозрачность заданы в палитре).
+    const QString cardBg = css(c.card);
 
     QString s = R"(
 * { font-family: "SF Pro Text","Segoe UI Variable Text","Segoe UI"; font-size: 13px; color: @text@; }
@@ -283,61 +279,14 @@ void Theme::paintBackdrop(QWidget* w) const {
     }
     const bool dark = colors_.dark;
     QPainter p(w);
-    const QRectF r = w->rect();
-
-    struct Blob { qreal x, y, rad; QColor color; };
-    const qreal m = std::max(r.width(), r.height());
-
+    p.setCompositionMode(QPainter::CompositionMode_Source);
     if (realBlur_) {
-        // Окно прозрачное, размытие даёт система. Здесь — лёгкая вуаль для читаемости текста
-        // и приглушённые цветные блики, чтобы стекло не выглядело серым.
-        p.setCompositionMode(QPainter::CompositionMode_Source);
-        p.fillRect(r, dark ? QColor(34, 40, 96, 60) : QColor(255, 255, 255, 80));
-        p.setCompositionMode(QPainter::CompositionMode_SourceOver);
-        const Blob lightGlows[] = {
-            {0.08, 0.02, 0.55, QColor(98, 160, 255, 70)},
-            {0.98, 0.35, 0.50, QColor(196, 139, 255, 60)},
-            {0.40, 1.02, 0.55, QColor(255, 156, 200, 55)},
-        };
-        // тёмная схема — насыщенные цвета, как в исходном тёмном стекле
-        const Blob darkGlows[] = {
-            {0.10, 0.05, 0.62, QColor(47, 107, 255, 150)},
-            {0.95, 0.30, 0.55, QColor(142, 61, 255, 120)},
-            {0.30, 1.00, 0.65, QColor(255, 61, 139, 70)},
-            {0.92, 1.00, 0.45, QColor(22, 199, 168, 70)},
-        };
-        const Blob* glows = dark ? darkGlows : lightGlows;
-        const int glowCount = dark ? 4 : 3;
-        for (int i = 0; i < glowCount; ++i) {
-            const Blob& b = glows[i];
-            QRadialGradient g(QPointF(r.width() * b.x, r.height() * b.y), m * b.rad);
-            g.setColorAt(0, b.color);
-            QColor edge = b.color;
-            edge.setAlpha(0);
-            g.setColorAt(1, edge);
-            p.fillRect(r, g);
-        }
-        return;
-    }
-
-    // Запасной вариант без размытия системы: непрозрачный цветной фон.
-    QLinearGradient base(r.topLeft(), r.bottomRight());
-    if (!dark) { base.setColorAt(0, "#D6E4FA"); base.setColorAt(0.55, "#E9E6F8"); base.setColorAt(1, "#F6E8F1"); }
-    else       { base.setColorAt(0, "#0A1022"); base.setColorAt(0.55, "#16122E"); base.setColorAt(1, "#1D1230"); }
-    p.fillRect(r, base);
-    const Blob blobs[] = {
-        {0.10, 0.05, 0.62, dark ? QColor(47, 107, 255, 150) : QColor(98, 160, 255, 170)},
-        {0.95, 0.30, 0.55, dark ? QColor(142, 61, 255, 120) : QColor(196, 139, 255, 130)},
-        {0.30, 1.00, 0.65, dark ? QColor(255, 61, 139, 70)  : QColor(255, 156, 200, 120)},
-        {0.92, 1.00, 0.45, dark ? QColor(22, 199, 168, 70)  : QColor(127, 230, 208, 110)},
-    };
-    for (const Blob& b : blobs) {
-        QRadialGradient g(QPointF(r.width() * b.x, r.height() * b.y), m * b.rad);
-        g.setColorAt(0, b.color);
-        QColor edge = b.color;
-        edge.setAlpha(0);
-        g.setColorAt(1, edge);
-        p.fillRect(r, g);
+        // Окно прозрачное, размытие даёт система. Здесь — только однотонная вуаль для читаемости текста:
+        // без цветных пятен и без градиентов.
+        p.fillRect(w->rect(), dark ? QColor(30, 34, 70, 60) : QColor(255, 255, 255, 80));
+    } else {
+        // Запасной вариант без размытия системы: однотонный непрозрачный фон.
+        p.fillRect(w->rect(), colors_.bg);
     }
 }
 
