@@ -2,3 +2,8 @@ build/
 *.user
 .vs/
 .vscode/
+
+# готовые установщики лежат вне репозитория (C:/uic-dist); на случай локальной сборки внутри папки
+dist/
+*.zip
+ImageConverter-Setup-*.exe
