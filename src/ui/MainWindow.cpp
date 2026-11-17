@@ -8,6 +8,7 @@
 #include "application/CapabilityReport.h"
 #include "infrastructure/qt_imageio/QtConvert.h"
 
+#include <QAbstractItemView>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDesktopServices>
@@ -239,6 +240,15 @@ void MainWindow::buildUi() {
     formatCombo_ = new QComboBox;
     formatCombo_->setMinimumWidth(150);
     formatCombo_->setCursor(Qt::PointingHandCursor);
+    // Окно списка — отдельное окно верхнего уровня: делаем его без рамки и тени, с прозрачным фоном,
+    // чтобы скруглённые углы и цвета темы рисовались так же, как у остальных панелей.
+    if (QAbstractItemView* v = formatCombo_->view()) {
+        QWidget* popup = v->window();
+        popup->setWindowFlag(Qt::FramelessWindowHint, true);
+        popup->setWindowFlag(Qt::NoDropShadowWindowHint, true);
+        popup->setAttribute(Qt::WA_TranslucentBackground, true);
+        v->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    }
     for (const auto& row : CapabilityReport::rows(registry_)) {
         if (!row.cap.write) continue; // формат без кодировщика не предлагается
         formatCombo_->addItem(QString::fromUtf8(row.label), static_cast<int>(row.cap.format));

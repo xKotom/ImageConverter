@@ -160,11 +160,17 @@ QPushButton[link="true"]:disabled { color: @text3@; }
 QPushButton[link="true"][quiet="true"] { color: @text2@; }
 
 QComboBox { background: @fill@; border: none; border-radius: 8px; padding: 6px 30px 6px 12px; min-height: 20px; font-weight: 500; }
+QComboBox { combobox-popup: 0; }  /* список раскрывается вниз под полем, а не «наезжает» на выбранный пункт */
 QComboBox:hover { background: @fillHover@; }
 QComboBox:disabled { color: @text3@; }
 QComboBox::drop-down { border: none; width: 26px; subcontrol-origin: padding; subcontrol-position: center right; }
 QComboBox::down-arrow { image: url(@chevron@); width: 10px; height: 10px; }
-QComboBox QAbstractItemView { background: @popup@; border: 1px solid @cardBorder@; border-radius: 8px; padding: 4px; outline: 0; selection-background-color: @accent@; selection-color: white; }
+QComboBoxPrivateContainer { background: @popup@; border: 1px solid @cardBorder@; border-radius: 10px; padding: 0; }
+QComboBox QAbstractItemView { background: @popup@; color: @text@; border: none; border-radius: 8px; padding: 4px; outline: 0;
+                              selection-background-color: @accent@; selection-color: white; }
+QComboBox QAbstractItemView::item { min-height: 28px; padding: 2px 8px; border-radius: 6px; color: @text@; }
+QComboBox QAbstractItemView::item:hover { background: @accentSoft@; }
+QComboBox QAbstractItemView::item:selected { background: @accent@; color: white; }
 
 QSlider { min-height: 22px; }
 QSlider::groove:horizontal { height: 4px; background: @track@; border-radius: 2px; }
